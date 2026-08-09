@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ada-assistant"
+version = "0.1.0"
+description = "Ada — a privacy-conscious voice assistant for macOS"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic>=0.66.0",
+    "sounddevice>=0.5.0",
+    "numpy>=1.26",
+    "openwakeword>=0.6.0",
+    "onnxruntime>=1.20",
+    "pysilero-vad>=2.0",
+    "faster-whisper>=1.1.0",
+    "PyYAML>=6.0",
+    "rich>=13.0",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+gui = ["pywebview>=5.0"]
+voice = ["kokoro-onnx>=0.4"]
+menubar = ["rumps>=0.4.0"]
+hotkey = ["pynput>=1.7.6"]
+websearch = ["ddgs>=9.0.0"]
+full = ["pywebview>=5.0", "kokoro-onnx>=0.4", "rumps>=0.4.0", "pynput>=1.7.6", "ddgs>=9.0.0"]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+ada = "ada.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+ada = ["config.default.yaml", "ui/hud/index.html"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

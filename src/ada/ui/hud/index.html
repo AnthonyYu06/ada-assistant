@@ -1,0 +1,1258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Ada</title>
+<style>
+  /* ======================================================================
+     Ada HUD — "liquid glass" theme.
+     One self-contained file: inline CSS + JS + Canvas, no external assets
+     (the window is an offline WKWebView). Cyan is the signature colour,
+     violet/ice the secondary; everything sits on a deep-blur glass panel
+     with an ambient aurora drifting behind it.
+     ====================================================================== */
+  :root {
+    --cyan: #35e6ff;
+    --cyan-soft: #8af3ff;
+    --violet: #8b7bff;
+    --violet-soft: #b3a7ff;
+    --ice: #bfe9ff;
+    --bg0: rgba(13, 19, 34, 0.62);
+    --bg1: rgba(7, 11, 21, 0.55);
+    --glass: rgba(255, 255, 255, 0.055);
+    --glass-hi: rgba(255, 255, 255, 0.10);
+    --line: rgba(255, 255, 255, 0.12);
+    --line-cyan: rgba(53, 230, 255, 0.28);
+    --text: #d9f1fb;
+    --text-dim: #82a6ba;
+    --danger: #ff5c72;
+    --ok: #58f0b4;
+    --r-panel: 26px;
+    --r-card: 16px;
+    --spring: cubic-bezier(0.22, 1.28, 0.36, 1);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%;
+    background: transparent;
+    overflow: hidden;
+    font-family: -apple-system, "SF Pro Display", "SF Pro Text", "Helvetica Neue", sans-serif;
+    color: var(--text);
+    -webkit-user-select: none; user-select: none;
+    cursor: default;
+  }
+
+  /* ---- the floating glass panel ---------------------------------------- */
+  #panel {
+    position: absolute; inset: 10px;
+    border-radius: var(--r-panel);
+    background: linear-gradient(165deg, var(--bg0), var(--bg1));
+    -webkit-backdrop-filter: blur(34px) saturate(170%);
+    backdrop-filter: blur(34px) saturate(170%);
+    border: 1px solid var(--line);
+    box-shadow:
+      0 24px 70px rgba(0, 0, 0, 0.60),
+      0 2px 12px rgba(0, 0, 0, 0.35),
+      inset 0 0 60px rgba(53, 230, 255, 0.045);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  /* specular edge: a 1px gradient border that reads as light on glass,
+     brightest along the top edge (padding-box mask trick) */
+  #panel::before {
+    content: ""; position: absolute; inset: 0; z-index: 6;
+    border-radius: inherit; padding: 1px; pointer-events: none;
+    background: linear-gradient(180deg,
+      rgba(255, 255, 255, 0.38),
+      rgba(255, 255, 255, 0.07) 22%,
+      rgba(139, 123, 255, 0.10) 60%,
+      rgba(53, 230, 255, 0.22));
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+  }
+  /* soft inner top sheen */
+  #panel::after {
+    content: ""; position: absolute; left: 0; right: 0; top: 0; height: 90px;
+    z-index: 1; pointer-events: none;
+    border-radius: var(--r-panel) var(--r-panel) 0 0;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.09), transparent);
+  }
+
+  /* ---- ambient aurora behind the glass ---------------------------------- */
+  .aurora {
+    position: absolute; inset: -30%; z-index: 0; pointer-events: none;
+    filter: blur(70px); opacity: 0.55;
+  }
+  .aurora .blob { position: absolute; border-radius: 50%; mix-blend-mode: screen; }
+  .aurora .b1 {
+    width: 65%; height: 55%; left: -5%; top: 0;
+    background: radial-gradient(circle at 35% 35%, rgba(53, 230, 255, 0.34), transparent 70%);
+    animation: drift1 26s ease-in-out infinite alternate;
+  }
+  .aurora .b2 {
+    width: 70%; height: 60%; right: -10%; top: 30%;
+    background: radial-gradient(circle at 60% 40%, rgba(139, 123, 255, 0.30), transparent 70%);
+    animation: drift2 34s ease-in-out infinite alternate;
+  }
+  .aurora .b3 {
+    width: 55%; height: 45%; left: 20%; bottom: -5%;
+    background: radial-gradient(circle at 50% 60%, rgba(150, 205, 255, 0.22), transparent 70%);
+    animation: drift3 42s ease-in-out infinite alternate;
+  }
+  @keyframes drift1 { to { transform: translate(38%, 30%) scale(1.25); } }
+  @keyframes drift2 { to { transform: translate(-30%, -22%) scale(1.15); } }
+  @keyframes drift3 { to { transform: translate(18%, -30%) scale(1.3); } }
+
+  /* content layers sit above the aurora */
+  header, .stage, .transcript, .inputbar { position: relative; z-index: 2; }
+
+  /* ---- header ------------------------------------------------------------ */
+  header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 14px 16px 8px;
+  }
+  .brand { display: flex; align-items: center; gap: 8px; }
+  .brand .name {
+    font-weight: 700; letter-spacing: 6px; font-size: 14px;
+    color: #f2fcff; text-shadow: 0 0 14px rgba(53, 230, 255, 0.55);
+  }
+  .brand .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--cyan); box-shadow: 0 0 10px var(--cyan);
+    animation: brandpulse 3.2s ease-in-out infinite;
+  }
+  @keyframes brandpulse { 0%, 100% { opacity: .5; } 50% { opacity: 1; } }
+  .status-pill {
+    margin-left: auto; font-size: 10px; letter-spacing: 2.5px;
+    text-transform: uppercase; color: var(--cyan-soft);
+    padding: 4px 11px; border-radius: 20px;
+    border: 1px solid var(--line-cyan);
+    background: linear-gradient(180deg, rgba(53, 230, 255, 0.10), rgba(53, 230, 255, 0.03));
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
+    white-space: nowrap;
+  }
+  .winbtns { display: flex; gap: 6px; margin-left: 8px; }
+  .winbtn {
+    width: 22px; height: 22px; border-radius: 50%;
+    border: 1px solid var(--line); background: var(--glass);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+    color: var(--text-dim); font-size: 12px; line-height: 1;
+    display: grid; place-items: center; cursor: pointer;
+    transition: all .18s var(--spring);
+  }
+  .winbtn:hover { color: #fff; border-color: var(--line-cyan); background: rgba(53, 230, 255, 0.14); transform: scale(1.08); }
+  .winbtn.on { color: var(--danger); border-color: rgba(255, 92, 114, 0.5); background: rgba(255, 92, 114, 0.12); }
+
+  /* ---- orb stage ---------------------------------------------------------- */
+  .stage { height: 170px; flex: 0 0 auto; }
+  #orb { position: absolute; inset: 0; width: 100%; height: 100%; cursor: pointer; }
+  .statusline {
+    position: absolute; bottom: 4px; left: 0; right: 0; text-align: center;
+    font-size: 11px; letter-spacing: 1.5px; color: var(--text-dim);
+    text-shadow: 0 0 10px rgba(0, 0, 0, 0.6); pointer-events: none;
+  }
+
+  /* ---- transcript / conversation flow ------------------------------------ */
+  .transcript {
+    flex: 1 1 auto; overflow-y: auto; overflow-x: hidden;
+    padding: 6px 14px 6px;
+    display: flex; flex-direction: column; gap: 9px;
+    -webkit-user-select: text; user-select: text;
+    mask-image: linear-gradient(180deg, transparent 0, #000 14px, #000 calc(100% - 6px), transparent 100%);
+    -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 14px, #000 calc(100% - 6px), transparent 100%);
+  }
+  .transcript::-webkit-scrollbar { width: 5px; }
+  .transcript::-webkit-scrollbar-thumb { background: rgba(53, 230, 255, 0.22); border-radius: 3px; }
+  .hint { text-align: center; color: var(--text-dim); font-size: 12px; margin: auto 0; opacity: .8; line-height: 1.7; }
+  .hint kbd {
+    font-family: inherit; font-size: 11px; padding: 1px 6px; border-radius: 6px;
+    border: 1px solid var(--line-cyan); background: rgba(53, 230, 255, 0.07); color: var(--cyan-soft);
+  }
+
+  .bubble {
+    max-width: 86%; padding: 8px 12px; border-radius: 15px;
+    font-size: 13px; line-height: 1.45; word-wrap: break-word;
+    animation: rise .38s var(--spring) both;
+  }
+  @keyframes rise { from { opacity: 0; transform: translateY(9px) scale(.985); } to { opacity: 1; transform: none; } }
+  .bubble.user {
+    align-self: flex-end; color: #041e27;
+    background: linear-gradient(180deg, var(--cyan-soft), var(--cyan));
+    border-bottom-right-radius: 5px;
+    box-shadow: 0 0 18px rgba(53, 230, 255, 0.30), inset 0 1px 0 rgba(255, 255, 255, 0.55);
+  }
+  .bubble.ada {
+    align-self: flex-start;
+    background: linear-gradient(165deg, var(--glass-hi), rgba(255, 255, 255, 0.03));
+    border: 1px solid var(--line); border-bottom-left-radius: 5px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  }
+
+  /* ---- display cards ------------------------------------------------------ */
+  .card {
+    align-self: stretch; overflow: hidden;
+    border-radius: var(--r-card);
+    background: linear-gradient(160deg, rgba(255, 255, 255, 0.085), rgba(255, 255, 255, 0.032));
+    border: 1px solid var(--line);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 10px 28px rgba(0, 0, 0, 0.28);
+    animation: cardin .45s var(--spring) both;
+    transition: border-color .25s ease;
+  }
+  .card:hover { border-color: var(--line-cyan); }
+  .card.swap { animation: none; }              /* in-place id replacement */
+  @keyframes cardin { from { opacity: 0; transform: translateY(12px) scale(.97); } to { opacity: 1; transform: none; } }
+  .card-head {
+    display: flex; align-items: center; gap: 7px;
+    padding: 8px 12px 0;
+  }
+  .card-glyph {
+    font-size: 11px; color: var(--cyan-soft); line-height: 1;
+    text-shadow: 0 0 8px rgba(53, 230, 255, 0.5);
+  }
+  .card-title {
+    font-size: 10px; font-weight: 600; letter-spacing: 2.2px;
+    text-transform: uppercase; color: rgba(240, 250, 255, 0.85);
+  }
+  .card-body { padding: 8px 12px 11px; font-size: 13px; line-height: 1.45; }
+  .dim { color: var(--text-dim); }
+
+  /* markdown */
+  .card-body h1.md-h1 { font-size: 15px; font-weight: 700; letter-spacing: .3px; margin: 4px 0 2px; color: #f0fbff; }
+  .card-body h2.md-h2 { font-size: 13px; font-weight: 600; letter-spacing: .8px; margin: 4px 0 2px; color: var(--ice); }
+  .card-body p.md-p { margin: 3px 0; }
+  .card-body ul.md-list, .card-body ol.md-list { margin: 3px 0 3px 18px; }
+  .card-body li { margin: 2px 0; }
+  .card-body li::marker { color: var(--cyan-soft); }
+  .card-body code {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px;
+    padding: 1px 5px; border-radius: 6px;
+    background: rgba(53, 230, 255, 0.10); color: var(--cyan-soft);
+    border: 1px solid rgba(53, 230, 255, 0.16);
+  }
+  a.mdlink { color: var(--cyan-soft); text-decoration: none; border-bottom: 1px solid rgba(138, 243, 255, 0.35); cursor: pointer; }
+  a.mdlink:hover { color: #fff; border-bottom-color: #fff; }
+
+  /* table */
+  .tscroll { overflow-x: auto; margin: 2px -2px; }
+  .tscroll::-webkit-scrollbar { height: 5px; }
+  .tscroll::-webkit-scrollbar-thumb { background: rgba(53, 230, 255, 0.22); border-radius: 3px; }
+  table.dtable { border-collapse: collapse; font-size: 12px; min-width: 100%; }
+  table.dtable th {
+    text-align: left; font-weight: 600; font-size: 10px; letter-spacing: 1.6px;
+    text-transform: uppercase; color: var(--cyan-soft);
+    padding: 4px 10px 5px; border-bottom: 1px solid var(--line-cyan);
+    white-space: nowrap;
+  }
+  table.dtable td { padding: 5px 10px; border-bottom: 1px solid rgba(255, 255, 255, 0.06); white-space: nowrap; }
+  table.dtable tr:last-child td { border-bottom: none; }
+
+  /* list / files / web results / calendar rows */
+  .lrow, .frow, .crow { display: flex; gap: 9px; padding: 4px 0; align-items: baseline; }
+  .licon { flex: 0 0 auto; width: 18px; text-align: center; }
+  .lmain { color: var(--text); }
+  .lsub, .fpath, .cmeta, .wdomain { font-size: 11px; color: var(--text-dim); }
+  .fpath { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 10.5px; word-break: break-all; }
+  .wrow { padding: 5px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.05); }
+  .wrow:last-child { border-bottom: none; }
+  .wrow.clickable { cursor: pointer; }
+  .wrow.clickable:hover .wtitle { color: #fff; }
+  .wtitle { color: var(--cyan-soft); font-weight: 500; transition: color .15s ease; }
+  .wsnippet { font-size: 12px; color: var(--text); opacity: .75; margin-top: 1px; }
+  .ctime { flex: 0 0 74px; text-align: right; }
+  .cstart { color: var(--cyan-soft); font-size: 12px; }
+  .cend { font-size: 10.5px; color: var(--text-dim); }
+  .ctitle { color: var(--text); }
+
+  /* keyvalue */
+  .kvgrid { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; }
+  .kvk { font-size: 10px; letter-spacing: 1.8px; text-transform: uppercase; color: var(--text-dim); align-self: baseline; padding-top: 2px; }
+  .kvv { color: var(--text); }
+
+  /* chart */
+  canvas.chartcv { display: block; width: 100%; height: 150px; }
+
+  /* image */
+  img.cimg { max-width: 100%; border-radius: 10px; display: block; cursor: zoom-in; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35); }
+  .caption { font-size: 11px; color: var(--text-dim); margin-top: 5px; text-align: center; }
+  #zoom {
+    position: absolute; inset: 0; z-index: 40; display: none;
+    align-items: center; justify-content: center; padding: 24px;
+    background: rgba(4, 8, 15, 0.82);
+    -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px);
+    cursor: zoom-out;
+  }
+  #zoom.show { display: flex; }
+  #zoom img { max-width: 100%; max-height: 100%; border-radius: 14px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7); }
+
+  /* now playing */
+  .nprow { display: flex; align-items: center; gap: 11px; }
+  .npbadge {
+    flex: 0 0 auto; width: 38px; height: 38px; border-radius: 11px;
+    display: grid; place-items: center;
+    background: linear-gradient(160deg, rgba(53, 230, 255, 0.18), rgba(139, 123, 255, 0.14));
+    border: 1px solid var(--line-cyan);
+  }
+  .eq { display: flex; align-items: flex-end; gap: 2.5px; height: 16px; }
+  .eq span { width: 3px; border-radius: 2px; background: var(--cyan); animation: eqb 1s ease-in-out infinite; }
+  .eq span:nth-child(1) { height: 60%; animation-delay: 0s; }
+  .eq span:nth-child(2) { height: 100%; animation-delay: .25s; }
+  .eq span:nth-child(3) { height: 45%; animation-delay: .5s; }
+  @keyframes eqb { 0%, 100% { transform: scaleY(.5); } 50% { transform: scaleY(1); } }
+  .eq.paused span { animation: none; transform: scaleY(.45); background: var(--text-dim); }
+  .nptrack { font-weight: 600; color: #f0fbff; }
+  .npmeta { font-size: 11.5px; color: var(--text-dim); }
+
+  /* timer */
+  .trow { display: flex; align-items: center; gap: 13px; }
+  svg.tring { width: 56px; height: 56px; flex: 0 0 auto; }
+  .tring-track { fill: none; stroke: rgba(255, 255, 255, 0.10); stroke-width: 4; }
+  .tring-prog {
+    fill: none; stroke: var(--cyan); stroke-width: 4; stroke-linecap: round;
+    filter: drop-shadow(0 0 4px rgba(53, 230, 255, 0.6));
+    transition: stroke-dashoffset .45s linear, stroke .3s ease;
+  }
+  .ttime { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; color: #f0fbff; letter-spacing: 1px; }
+  .tlab { font-size: 11px; letter-spacing: 1.6px; text-transform: uppercase; color: var(--text-dim); }
+  .card.done .tring-prog { stroke: var(--ok); filter: drop-shadow(0 0 5px rgba(88, 240, 180, 0.7)); }
+  .card.done .ttime { color: var(--ok); }
+
+  /* ---- tool-activity chips ------------------------------------------------ */
+  .toolchip {
+    align-self: flex-start; display: inline-flex; align-items: center; gap: 7px;
+    max-width: 92%; padding: 5px 11px; border-radius: 13px;
+    font-size: 11.5px; color: var(--text-dim);
+    background: var(--glass); border: 1px solid var(--line);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
+    animation: rise .35s var(--spring) both;
+    transition: opacity .4s ease, transform .4s ease;
+  }
+  .toolchip .gear { display: inline-block; color: var(--cyan-soft); animation: spin 1.6s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .toolchip.running { color: var(--text); border-color: var(--line-cyan); }
+  .toolchip.done { opacity: .55; transform: scale(.96); }
+  .toolchip .mark { font-weight: 700; }
+  .toolchip.ok .mark { color: var(--ok); }
+  .toolchip.err .mark { color: var(--danger); }
+
+  /* ---- timing chip + waterfall -------------------------------------------- */
+  .timing { align-self: flex-start; max-width: 92%; }
+  .timechip {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 3px 9px; border-radius: 11px; cursor: pointer;
+    font-family: inherit; font-size: 10.5px; letter-spacing: .5px;
+    color: var(--text-dim); background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    transition: all .2s ease;
+  }
+  .timechip:hover { color: var(--cyan-soft); border-color: var(--line-cyan); }
+  .timechip .bolt { font-size: 10px; }
+  .waterfall { display: none; padding: 7px 4px 3px; }
+  .timing.open .waterfall { display: block; }
+  .wf-row { display: flex; align-items: center; gap: 8px; padding: 2px 0; font-size: 10.5px; }
+  .wf-label { flex: 0 0 88px; color: var(--text-dim); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wf-track { flex: 1 1 auto; height: 5px; border-radius: 3px; background: rgba(255, 255, 255, 0.06); overflow: hidden; }
+  .wf-bar { display: block; height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--cyan), var(--violet)); }
+  .wf-ms { flex: 0 0 48px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+
+  /* ---- input bar ----------------------------------------------------------- */
+  .inputbar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 12px 12px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent);
+  }
+  #entry {
+    flex: 1; background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--line); border-radius: 13px;
+    padding: 10px 13px; color: var(--text); font-size: 13px; outline: none;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.2);
+    -webkit-user-select: text; user-select: text;
+    transition: border-color .18s ease, box-shadow .18s ease;
+  }
+  #entry::placeholder { color: var(--text-dim); }
+  #entry:focus { border-color: var(--line-cyan); box-shadow: 0 0 0 3px rgba(53, 230, 255, 0.10), inset 0 1px 2px rgba(0, 0, 0, 0.2); }
+  .iconbtn {
+    width: 40px; height: 40px; flex: 0 0 auto; border-radius: 13px;
+    border: 1px solid var(--line);
+    background: linear-gradient(160deg, rgba(53, 230, 255, 0.10), rgba(139, 123, 255, 0.06));
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
+    color: var(--cyan-soft); cursor: pointer; display: grid; place-items: center;
+    transition: all .22s var(--spring);
+  }
+  .iconbtn:hover { background: linear-gradient(160deg, rgba(53, 230, 255, 0.20), rgba(139, 123, 255, 0.12)); border-color: var(--line-cyan); color: #fff; transform: translateY(-1px); }
+  .iconbtn:active { transform: scale(0.93); }
+  .iconbtn svg { width: 18px; height: 18px; }
+
+  /* ---- reduced motion ------------------------------------------------------ */
+  @media (prefers-reduced-motion: reduce) {
+    .aurora .blob, .brand .dot, .toolchip .gear, .eq span { animation: none !important; }
+    .bubble, .card, .toolchip { animation-duration: .01s !important; }
+    .tring-prog { transition: none; }
+  }
+</style>
+</head>
+<body>
+  <div id="panel">
+    <div class="aurora"><div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div></div>
+
+    <header>
+      <div class="brand"><span class="dot"></span><span class="name" id="brandName">ADA</span></div>
+      <div class="status-pill" id="pill">STARTING</div>
+      <div class="winbtns">
+        <div class="winbtn" id="muteBtn" title="Mute">
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v1a7 7 0 0 1-14 0v-1"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+        </div>
+        <div class="winbtn" id="quitBtn" title="Quit Ada">✕</div>
+      </div>
+    </header>
+
+    <div class="stage">
+      <canvas id="orb"></canvas>
+      <div class="statusline" id="statusline">waking up…</div>
+    </div>
+
+    <div class="transcript" id="transcript">
+      <div class="hint" id="hint">
+        Tap the orb or press <kbd>⌘⇧A</kbd> to talk.<br/>Or just type below.
+      </div>
+    </div>
+
+    <div class="inputbar">
+      <input id="entry" type="text" autocomplete="off" spellcheck="false" placeholder="Ask Ada…" />
+      <div class="iconbtn" id="talkBtn" title="Tap to talk">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v1a7 7 0 0 1-14 0v-1"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+      </div>
+      <div class="iconbtn" id="sendBtn" title="Send">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+      </div>
+    </div>
+
+    <div id="zoom"><img id="zoomImg" alt="" /></div>
+  </div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---- bridge to Python (pywebview) --------------------------------------
+  function api() { return (window.pywebview && window.pywebview.api) || null; }
+  function call(method, arg) {
+    const a = api();
+    if (a && typeof a[method] === "function") {
+      try { arg === undefined ? a[method]() : a[method](arg); } catch (e) {}
+    }
+  }
+
+  const pill = document.getElementById("pill");
+  const statusline = document.getElementById("statusline");
+  const transcript = document.getElementById("transcript");
+  const entry = document.getElementById("entry");
+  const muteBtn = document.getElementById("muteBtn");
+  const brandName = document.getElementById("brandName");
+  const zoom = document.getElementById("zoom");
+  const zoomImg = document.getElementById("zoomImg");
+
+  const REDUCED = !!(window.matchMedia &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+
+  // ---- state ------------------------------------------------------------
+  const STATUS_TEXT = {
+    starting: "waking up…", idle: "listening for you", listening: "listening…",
+    thinking: "thinking…", speaking: "speaking…", muted: "muted",
+    error: "something went wrong", stopped: "goodbye"
+  };
+  const cfg = { showTimings: true, name: "Ada" };  // pushed via configure()
+  let state = "starting";
+  let muted = false;
+  let adaBubble = null;          // current streaming Ada bubble
+  let level = 0;                 // 0..1 external audio level
+
+  // ---- small DOM helpers (SECURITY: only textContent, never innerHTML) ---
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+  function str(x) { return x == null ? "" : String(x); }
+  function num(x) { const n = Number(x); return isFinite(n) ? n : 0; }
+  function arr(x) { return Array.isArray(x) ? x : []; }
+
+  function clearHint() {
+    const hint = document.getElementById("hint");
+    if (hint) hint.remove();
+  }
+  // auto-scroll only when the user is already reading the newest content
+  function nearBottom() {
+    return transcript.scrollTop + transcript.clientHeight >= transcript.scrollHeight - 48;
+  }
+  function scrollBottom() { transcript.scrollTop = transcript.scrollHeight; }
+
+  function addBubble(cls, text) {
+    clearHint();
+    const wasNear = nearBottom();
+    const b = el("div", "bubble " + cls, text);
+    transcript.appendChild(b);
+    if (wasNear) scrollBottom();
+    return b;
+  }
+
+  // =========================================================================
+  //  DISPLAY CARDS — rich graphical answers in the conversation flow
+  // =========================================================================
+  const cardById = new Map();    // id -> card element (same id replaces in place)
+  const charts = new Set();      // cards holding a redrawable canvas chart
+
+  const GLYPHS = {
+    markdown: "¶", table: "▦", list: "≡", keyvalue: "∷", chart: "∿",
+    image: "◨", web_results: "⌕", files: "▤", now_playing: "♪",
+    timer: "◔", calendar: "▣"
+  };
+
+  function addCleanup(card, fn) {
+    const prev = card._adaCleanup;
+    card._adaCleanup = prev ? function () { prev(); fn(); } : fn;
+  }
+  function cleanupCard(card) {
+    try { if (card._adaCleanup) card._adaCleanup(); } catch (e) {}
+  }
+
+  // a link that opens through the Python bridge (http/https only)
+  function linkEl(text, url) {
+    const a = el("a", "mdlink", text);
+    const u = str(url);
+    if (/^https?:\/\//i.test(u)) {
+      a.addEventListener("click", function (e) { e.preventDefault(); call("openUrl", u); });
+    }
+    return a;
+  }
+  function domainOf(u) {
+    try { return new URL(u).hostname.replace(/^www\./, ""); } catch (e) { return ""; }
+  }
+
+  // ---- mini-markdown (DOM-built, no innerHTML) ----------------------------
+  function renderInline(parent, text) {
+    const re = /\*\*([^*]+)\*\*|\*([^*]+)\*|`([^`]+)`|\[([^\]]+)\]\(([^()\s]+)\)/g;
+    let i = 0, m;
+    while ((m = re.exec(text)) !== null) {
+      if (m.index > i) parent.appendChild(document.createTextNode(text.slice(i, m.index)));
+      if (m[1] != null) parent.appendChild(el("strong", null, m[1]));
+      else if (m[2] != null) parent.appendChild(el("em", null, m[2]));
+      else if (m[3] != null) parent.appendChild(el("code", null, m[3]));
+      else parent.appendChild(linkEl(m[4], m[5]));
+      i = re.lastIndex;
+    }
+    if (i < text.length) parent.appendChild(document.createTextNode(text.slice(i)));
+  }
+
+  function buildMarkdown(body, p) {
+    const lines = str(p.body).split(/\r?\n/);
+    let listBox = null, listType = null;
+    function closeList() { listBox = null; listType = null; }
+    for (const raw of lines) {
+      const t = raw.trim();
+      if (!t) { closeList(); continue; }
+      let m;
+      if ((m = t.match(/^(#{1,2})\s+(.*)$/))) {
+        closeList();
+        const h = el(m[1].length === 1 ? "h1" : "h2", "md-h" + m[1].length);
+        renderInline(h, m[2]); body.appendChild(h);
+      } else if ((m = t.match(/^[-*]\s+(.*)$/))) {
+        if (listType !== "ul") { listBox = el("ul", "md-list"); listType = "ul"; body.appendChild(listBox); }
+        const li = el("li"); renderInline(li, m[1]); listBox.appendChild(li);
+      } else if ((m = t.match(/^\d+[.)]\s+(.*)$/))) {
+        if (listType !== "ol") { listBox = el("ol", "md-list"); listType = "ol"; body.appendChild(listBox); }
+        const li = el("li"); renderInline(li, m[1]); listBox.appendChild(li);
+      } else {
+        closeList();
+        const par = el("p", "md-p"); renderInline(par, t); body.appendChild(par);
+      }
+    }
+  }
+
+  function buildTable(body, p) {
+    const wrap = el("div", "tscroll");
+    const table = el("table", "dtable");
+    const cols = arr(p.columns);
+    if (cols.length) {
+      const thead = el("thead"), tr = el("tr");
+      cols.forEach(function (c) { tr.appendChild(el("th", null, str(c))); });
+      thead.appendChild(tr); table.appendChild(thead);
+    }
+    const tbody = el("tbody");
+    arr(p.rows).forEach(function (r) {
+      const tr = el("tr");
+      arr(r).forEach(function (c) { tr.appendChild(el("td", null, str(c))); });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody); wrap.appendChild(table); body.appendChild(wrap);
+  }
+
+  function buildList(body, p) {
+    arr(p.items).forEach(function (it) {
+      it = it || {};
+      const row = el("div", "lrow");
+      row.appendChild(el("span", "licon", str(it.icon) || "•"));
+      const tx = el("div", "ltext");
+      tx.appendChild(el("div", "lmain", str(it.text)));
+      if (it.sub) tx.appendChild(el("div", "lsub", str(it.sub)));
+      row.appendChild(tx);
+      body.appendChild(row);
+    });
+  }
+
+  function buildKeyValue(body, p) {
+    const grid = el("div", "kvgrid");
+    arr(p.pairs).forEach(function (pair) {
+      pair = arr(pair);
+      grid.appendChild(el("div", "kvk", str(pair[0])));
+      grid.appendChild(el("div", "kvv", str(pair[1])));
+    });
+    body.appendChild(grid);
+  }
+
+  // canvas bar/line chart in theme colours — no library
+  function roundRect(c, x, y, w, h, r) {
+    r = Math.min(r, w / 2, h / 2);
+    c.beginPath();
+    c.moveTo(x + r, y);
+    c.arcTo(x + w, y, x + w, y + h, r);
+    c.arcTo(x + w, y + h, x, y + h, r);
+    c.arcTo(x, y + h, x, y, r);
+    c.arcTo(x, y, x + w, y, r);
+    c.closePath();
+  }
+  function fmtVal(v) { return String(Math.abs(v) >= 100 ? Math.round(v) : Math.round(v * 10) / 10); }
+  function clipLabel(s, px) {
+    const maxCh = Math.max(2, Math.floor(px / 6.2));
+    return s.length > maxCh ? s.slice(0, maxCh - 1) + "…" : s;
+  }
+
+  function buildChart(body, p, card) {
+    const labels = arr(p.labels).map(str);
+    const values = arr(p.values).map(num);
+    const type = str(p.chart) === "line" ? "line" : "bar";
+    const unit = str(p.unit);
+    const cv = el("canvas", "chartcv");
+    body.appendChild(cv);
+
+    function draw() {
+      if (!cv.isConnected) return;
+      const dpr2 = window.devicePixelRatio || 1;
+      const w = cv.clientWidth || 330, h = 150;
+      cv.width = Math.round(w * dpr2); cv.height = Math.round(h * dpr2);
+      const c = cv.getContext("2d");
+      c.setTransform(dpr2, 0, 0, dpr2, 0, 0);
+      c.clearRect(0, 0, w, h);
+      c.font = "10px -apple-system, 'Helvetica Neue', sans-serif";
+      c.textAlign = "center";
+      const n = values.length;
+      if (!n) { c.fillStyle = "rgba(130,166,186,.8)"; c.fillText("no data", w / 2, h / 2); return; }
+      const maxV = Math.max.apply(null, values.concat([0]));
+      const minV = Math.min.apply(null, values.concat([0]));
+      const span = (maxV - minV) || 1;
+      const padT = 18, padB = 20, padL = 8, padR = 8;
+      const ih = h - padT - padB, iw = w - padL - padR;
+      const yOf = function (v) { return padT + ih - ((v - minV) / span) * ih; };
+      // faint grid
+      c.strokeStyle = "rgba(255,255,255,0.07)"; c.lineWidth = 1;
+      for (let g = 0; g <= 3; g++) {
+        const gy = padT + (ih * g) / 3;
+        c.beginPath(); c.moveTo(padL, gy); c.lineTo(w - padR, gy); c.stroke();
+      }
+      if (type === "bar") {
+        const step = iw / n, bw = Math.min(34, step * 0.6);
+        values.forEach(function (v, i) {
+          const x = padL + step * i + step / 2;
+          const y0 = yOf(Math.max(0, minV)), y1 = yOf(v);
+          const top = Math.min(y0, y1), bh = Math.max(2, Math.abs(y0 - y1));
+          const grad = c.createLinearGradient(0, top, 0, top + bh);
+          grad.addColorStop(0, "rgba(53,230,255,0.95)");
+          grad.addColorStop(1, "rgba(139,123,255,0.50)");
+          c.fillStyle = grad;
+          roundRect(c, x - bw / 2, top, bw, bh, 4); c.fill();
+          c.fillStyle = "rgba(234,252,255,0.92)";
+          c.fillText(fmtVal(v) + unit, x, top - 5);
+          c.fillStyle = "rgba(130,166,186,0.9)";
+          c.fillText(clipLabel(labels[i] || "", step), x, h - 6);
+        });
+      } else {
+        const step = n > 1 ? iw / (n - 1) : 0;
+        const pts = values.map(function (v, i) {
+          return [padL + (n === 1 ? iw / 2 : step * i), yOf(v)];
+        });
+        // glowing line
+        c.beginPath();
+        pts.forEach(function (pt, i) { i ? c.lineTo(pt[0], pt[1]) : c.moveTo(pt[0], pt[1]); });
+        c.strokeStyle = "rgba(53,230,255,0.95)"; c.lineWidth = 2; c.lineJoin = "round";
+        c.stroke();
+        // soft area fill under the line
+        c.lineTo(pts[pts.length - 1][0], h - padB);
+        c.lineTo(pts[0][0], h - padB); c.closePath();
+        const lg = c.createLinearGradient(0, padT, 0, h - padB);
+        lg.addColorStop(0, "rgba(53,230,255,0.22)");
+        lg.addColorStop(1, "rgba(139,123,255,0.02)");
+        c.fillStyle = lg; c.fill();
+        pts.forEach(function (pt, i) {
+          c.fillStyle = "rgba(234,252,255,0.95)";
+          c.beginPath(); c.arc(pt[0], pt[1], 2.5, 0, Math.PI * 2); c.fill();
+          c.fillText(fmtVal(values[i]) + unit, pt[0], pt[1] - 7);
+          c.fillStyle = "rgba(130,166,186,0.9)";
+          c.fillText(clipLabel(labels[i] || "", step + 12), pt[0], h - 6);
+        });
+      }
+    }
+    card._adaChart = draw;
+    charts.add(card);
+    addCleanup(card, function () { charts.delete(card); });
+    requestAnimationFrame(draw);  // after layout, when the width is known
+  }
+
+  function showZoom(src) { zoomImg.src = src; zoom.classList.add("show"); }
+  zoom.addEventListener("click", function () { zoom.classList.remove("show"); zoomImg.src = ""; });
+
+  function buildImage(body, p) {
+    const src = str(p.src);
+    if (!/^data:image\//i.test(src)) {           // data-URI images only
+      body.appendChild(el("div", "md-p dim", "unsupported image"));
+      return;
+    }
+    const img = el("img", "cimg");
+    img.src = src;
+    img.alt = str(p.caption) || "image";
+    img.addEventListener("click", function () { showZoom(src); });
+    body.appendChild(img);
+    if (p.caption) body.appendChild(el("div", "caption", str(p.caption)));
+  }
+
+  function buildWebResults(body, p) {
+    arr(p.results).forEach(function (r) {
+      r = r || {};
+      const row = el("div", "wrow");
+      const u = str(r.url);
+      row.appendChild(el("div", "wtitle", str(r.title) || u));
+      const d = domainOf(u);
+      if (d) row.appendChild(el("div", "wdomain", d));
+      if (r.snippet) row.appendChild(el("div", "wsnippet", str(r.snippet)));
+      if (/^https?:\/\//i.test(u)) {
+        row.classList.add("clickable");
+        row.addEventListener("click", function () { call("openUrl", u); });
+      }
+      body.appendChild(row);
+    });
+  }
+
+  const FILE_GLYPHS = { folder: "📁", image: "🖼", audio: "🎵", video: "🎞", pdf: "📕", app: "⚙" };
+  function buildFiles(body, p) {
+    arr(p.items).forEach(function (it) {
+      it = it || {};
+      const row = el("div", "frow");
+      row.appendChild(el("span", "licon", FILE_GLYPHS[str(it.kind)] || "📄"));
+      const tx = el("div", "ltext");
+      tx.appendChild(el("div", "lmain", str(it.name)));
+      if (it.path) tx.appendChild(el("div", "fpath", str(it.path)));
+      row.appendChild(tx);
+      body.appendChild(row);
+    });
+  }
+
+  function buildNowPlaying(body, p) {
+    const playing = str(p.state) === "playing";
+    const row = el("div", "nprow");
+    const badge = el("div", "npbadge");
+    const eq = el("div", "eq" + (playing ? "" : " paused"));
+    eq.appendChild(el("span")); eq.appendChild(el("span")); eq.appendChild(el("span"));
+    badge.appendChild(eq);
+    row.appendChild(badge);
+    const tx = el("div", "ltext");
+    tx.appendChild(el("div", "nptrack", str(p.track)));
+    const meta = [str(p.artist), str(p.album)].filter(Boolean).join(" — ");
+    if (meta) tx.appendChild(el("div", "npmeta", meta));
+    const sub = [playing ? "playing" : "paused", str(p.app)].filter(Boolean).join(" · ");
+    tx.appendChild(el("div", "lsub", sub));
+    row.appendChild(tx);
+    body.appendChild(row);
+  }
+
+  function fmtCountdown(rem) {
+    rem = Math.max(0, Math.floor(rem));
+    const h = Math.floor(rem / 3600), m = Math.floor((rem % 3600) / 60), s = rem % 60;
+    return h > 0
+      ? h + ":" + String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0")
+      : m + ":" + String(s).padStart(2, "0");
+  }
+
+  // live countdown card with a progress ring; same-id re-pushes replace it
+  function buildTimer(body, p, card) {
+    const label = str(p.label) || "Timer";
+    const dur = Math.max(1, num(p.duration_s) || 1);
+    const ends = num(p.ends_at);
+    const NS = "http://www.w3.org/2000/svg";
+    const S = 56, RR = 24, C = 2 * Math.PI * RR;
+    const svg = document.createElementNS(NS, "svg");
+    svg.setAttribute("viewBox", "0 0 " + S + " " + S);
+    svg.setAttribute("class", "tring");
+    const track = document.createElementNS(NS, "circle");
+    track.setAttribute("cx", S / 2); track.setAttribute("cy", S / 2); track.setAttribute("r", RR);
+    track.setAttribute("class", "tring-track");
+    const prog = document.createElementNS(NS, "circle");
+    prog.setAttribute("cx", S / 2); prog.setAttribute("cy", S / 2); prog.setAttribute("r", RR);
+    prog.setAttribute("class", "tring-prog");
+    prog.setAttribute("stroke-dasharray", String(C));
+    prog.setAttribute("transform", "rotate(-90 " + S / 2 + " " + S / 2 + ")");
+    svg.appendChild(track); svg.appendChild(prog);
+
+    const timeEl = el("div", "ttime");
+    const labEl = el("div", "tlab", label);
+    const col = el("div", "tcol");
+    col.appendChild(timeEl); col.appendChild(labEl);
+    const wrap = el("div", "trow");
+    wrap.appendChild(svg); wrap.appendChild(col);
+    body.appendChild(wrap);
+
+    let iv = null;
+    function stop() { if (iv) { clearInterval(iv); iv = null; } }
+    function tick() {
+      const rem = ends - Date.now() / 1000;
+      if (rem <= 0) {
+        timeEl.textContent = "0:00";
+        prog.style.strokeDashoffset = "0";       // full ring in the done colour
+        labEl.textContent = label + " — done";
+        card.classList.add("done");
+        stop();
+        return;
+      }
+      timeEl.textContent = fmtCountdown(rem);
+      const frac = Math.max(0, Math.min(1, rem / dur));
+      prog.style.strokeDashoffset = String(C * (1 - frac));
+    }
+    tick();
+    if (ends - Date.now() / 1000 > 0) iv = setInterval(tick, 500);
+    addCleanup(card, stop);
+  }
+
+  function buildCalendar(body, p) {
+    arr(p.events).forEach(function (ev) {
+      ev = ev || {};
+      const row = el("div", "crow");
+      const time = el("div", "ctime");
+      time.appendChild(el("div", "cstart", str(ev.start)));
+      if (ev.end) time.appendChild(el("div", "cend", str(ev.end)));
+      row.appendChild(time);
+      const main = el("div", "cmain");
+      main.appendChild(el("div", "ctitle", str(ev.title)));
+      const meta = [str(ev.location), str(ev.calendar)].filter(Boolean).join(" · ");
+      if (meta) main.appendChild(el("div", "cmeta", meta));
+      row.appendChild(main);
+      body.appendChild(row);
+    });
+  }
+
+  // unknown kinds never break the HUD: title (in the head) + plain body text
+  function buildFallback(body, p) {
+    body.appendChild(el("div", p.body ? "md-p" : "md-p dim", str(p.body) || "(no preview)"));
+  }
+
+  const BUILDERS = {
+    markdown: buildMarkdown, table: buildTable, list: buildList,
+    keyvalue: buildKeyValue, chart: buildChart, image: buildImage,
+    web_results: buildWebResults, files: buildFiles,
+    now_playing: buildNowPlaying, timer: buildTimer, calendar: buildCalendar
+  };
+
+  function makeCard(p) {
+    const kind = str(p.kind);
+    const card = el("article", "card");
+    const head = el("div", "card-head");
+    head.appendChild(el("span", "card-glyph", GLYPHS[kind] || "◈"));
+    head.appendChild(el("span", "card-title", str(p.title) || kind.replace(/_/g, " ")));
+    card.appendChild(head);
+    const body = el("div", "card-body");
+    card.appendChild(body);
+    try {
+      (BUILDERS[kind] || buildFallback)(body, p, card);
+    } catch (e) {
+      body.textContent = str(p.body);
+    }
+    return card;
+  }
+
+  // redraw live charts when the (resizable) window changes width
+  let chartTimer = null;
+  window.addEventListener("resize", function () {
+    if (chartTimer) clearTimeout(chartTimer);
+    chartTimer = setTimeout(function () {
+      charts.forEach(function (card) {
+        if (card.isConnected) { try { card._adaChart(); } catch (e) {} }
+        else charts.delete(card);
+      });
+    }, 120);
+  });
+
+  // =========================================================================
+  //  TOOL-ACTIVITY CHIPS + TIMING CHIP
+  // =========================================================================
+  const toolChips = new Map();   // tool name -> running chip element
+
+  function resolveChip(chip, ok, summary) {
+    const gear = chip.querySelector(".gear");
+    if (gear) { gear.classList.remove("gear"); gear.textContent = ok ? "✓" : "✕"; gear.className = "mark"; }
+    if (summary) {
+      const lab = chip.querySelector(".tlabel");
+      if (lab) lab.textContent = summary;
+    }
+    chip.classList.remove("running");
+    chip.classList.add("done", ok ? "ok" : "err");
+  }
+
+  function addToolChip(payload) {
+    const name = str(payload.name);
+    const summary = str(payload.summary) || name;
+    const st = str(payload.state);
+    const wasNear = nearBottom();
+    if (st === "running") {
+      clearHint();
+      const chip = el("div", "toolchip running");
+      chip.appendChild(el("span", "gear", "⚙"));
+      chip.appendChild(el("span", "tlabel", summary));
+      const stale = toolChips.get(name);      // a re-run before the old resolved
+      if (stale && stale.isConnected) resolveChip(stale, true, null);
+      toolChips.set(name, chip);
+      transcript.appendChild(chip);
+    } else {
+      const ok = st !== "error";
+      const chip = toolChips.get(name);
+      toolChips.delete(name);
+      if (chip && chip.isConnected) {
+        resolveChip(chip, ok, summary);
+      } else {                                // resolution with no running chip
+        clearHint();
+        const c = el("div", "toolchip done " + (ok ? "ok" : "err"));
+        c.appendChild(el("span", "mark", ok ? "✓" : "✕"));
+        c.appendChild(el("span", "tlabel", summary));
+        transcript.appendChild(c);
+      }
+    }
+    if (wasNear) scrollBottom();
+  }
+
+  function addTimingChip(payload) {
+    if (!cfg.showTimings) return;             // configured off: never rendered
+    const total = num(payload.total_ms);
+    const stages = arr(payload.stages);
+    const wasNear = nearBottom();
+    const wrap = el("div", "timing");
+    const chip = el("button", "timechip");
+    chip.type = "button";
+    chip.appendChild(el("span", "bolt", "⚡"));
+    chip.appendChild(el("span", null, (total / 1000).toFixed(1) + "s"));
+    wrap.appendChild(chip);
+    // the expandable stage waterfall
+    const fall = el("div", "waterfall");
+    const maxMs = stages.reduce(function (m, s) { return Math.max(m, num(arr(s)[1])); }, 1);
+    stages.forEach(function (s) {
+      s = arr(s);
+      const row = el("div", "wf-row");
+      row.appendChild(el("span", "wf-label", str(s[0])));
+      const track = el("span", "wf-track");
+      const bar = el("span", "wf-bar");
+      bar.style.width = Math.max(2, Math.round((num(s[1]) / maxMs) * 100)) + "%";
+      track.appendChild(bar);
+      row.appendChild(track);
+      row.appendChild(el("span", "wf-ms", Math.round(num(s[1])) + "ms"));
+      fall.appendChild(row);
+    });
+    wrap.appendChild(fall);
+    chip.addEventListener("click", function () { wrap.classList.toggle("open"); });
+    transcript.appendChild(wrap);
+    if (wasNear) scrollBottom();
+  }
+
+  // ---- public API (Python -> JS) ----------------------------------------
+  window.ada = {
+    setState(s, detail) {
+      state = s || "idle";
+      pill.textContent = (state === "idle" ? "READY" : state).toUpperCase();
+      statusline.textContent = (detail && detail.length)
+        ? detail : (STATUS_TEXT[state] || state);
+    },
+    setMuted(m) {
+      muted = !!m;
+      muteBtn.classList.toggle("on", muted);
+    },
+    userText(text) {
+      // finalize any dangling ada bubble first
+      adaBubble = null;
+      addBubble("user", text);
+    },
+    assistantDelta(text) {
+      const wasNear = nearBottom();
+      if (!adaBubble) {
+        adaBubble = addBubble("ada", "");
+      }
+      adaBubble.textContent = (adaBubble.textContent
+        ? adaBubble.textContent + " " : "") + text;
+      if (wasNear) scrollBottom();
+    },
+    assistantDone(full) {
+      if (adaBubble && !adaBubble.textContent && full) {
+        adaBubble.textContent = full;
+      }
+      adaBubble = null;
+    },
+    level(x) { level = Math.max(0, Math.min(1, x || 0)); },
+
+    // rich display card; same-id cards replace each other in place
+    display(payload) {
+      try {
+        if (!payload || typeof payload !== "object") return;
+        const wasNear = nearBottom();
+        const card = makeCard(payload);
+        const id = payload.id == null ? null : String(payload.id);
+        const old = id ? cardById.get(id) : null;
+        if (old && old.isConnected) {
+          cleanupCard(old);
+          card.classList.add("swap");          // no entry animation on updates
+          old.replaceWith(card);
+        } else {
+          clearHint();
+          transcript.appendChild(card);
+        }
+        if (id) cardById.set(id, card);
+        if (wasNear) scrollBottom();
+      } catch (e) { /* a bad card must never break the HUD */ }
+    },
+
+    // tool activity: running chip -> resolved ✓/✕ compact chip
+    tool(payload) {
+      try {
+        if (!payload || typeof payload !== "object") return;
+        addToolChip(payload);
+      } catch (e) {}
+    },
+
+    // per-turn latency chip (click to expand the stage waterfall)
+    timing(payload) {
+      try {
+        if (!payload || typeof payload !== "object") return;
+        addTimingChip(payload);
+      } catch (e) {}
+    },
+
+    // options pushed from Python once the bridge is ready
+    configure(opts) {
+      try {
+        opts = opts || {};
+        if (typeof opts.showTimings === "boolean") cfg.showTimings = opts.showTimings;
+        if (opts.name) {
+          cfg.name = str(opts.name);
+          brandName.textContent = cfg.name.toUpperCase();
+          entry.placeholder = "Ask " + cfg.name + "…";
+          document.title = cfg.name;
+        }
+      } catch (e) {}
+    }
+  };
+
+  // ---- interactions (JS -> Python) --------------------------------------
+  function sendEntry() {
+    const t = entry.value.trim();
+    if (!t) return;
+    window.ada.userText(t);
+    entry.value = "";
+    call("sendText", t);
+  }
+  document.getElementById("sendBtn").addEventListener("click", sendEntry);
+  entry.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); sendEntry(); }
+  });
+  document.getElementById("talkBtn").addEventListener("click", () => call("talk"));
+  document.getElementById("orb").addEventListener("click", () => call("talk"));
+  muteBtn.addEventListener("click", () => call("toggleMute"));
+  document.getElementById("quitBtn").addEventListener("click", () => call("quit"));
+
+  // Ask Python to push the initial state once the bridge is live.
+  window.addEventListener("pywebviewready", () => call("ready"));
+
+  // ======================================================================
+  //  THE ORB  — canvas-drawn reactive core (cyan signature, glassier)
+  // ======================================================================
+  const canvas = document.getElementById("orb");
+  const ctx = canvas.getContext("2d");
+  let W = 0, H = 0, CX = 0, CY = 0, R = 0, dpr = 1;
+
+  function resize() {
+    dpr = window.devicePixelRatio || 1;
+    const r = canvas.getBoundingClientRect();
+    W = r.width; H = r.height;
+    canvas.width = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    CX = W / 2; CY = H / 2;
+    R = Math.min(W, H) * 0.30;
+  }
+  window.addEventListener("resize", resize);
+
+  // fewer, finer particles than v1 — premium rather than busy
+  const PARTS = Array.from({ length: 26 }, () => ({
+    a: Math.random() * Math.PI * 2,
+    rad: 0.7 + Math.random() * 1.35,
+    spd: (0.12 + Math.random() * 0.4) * (Math.random() < 0.5 ? -1 : 1),
+    sz: 0.5 + Math.random() * 1.2,
+    tw: Math.random() * Math.PI * 2
+  }));
+
+  let amp = 0.2;          // smoothed amplitude 0..1
+  const CY_RGB = "53,230,255";
+  const VI_RGB = "139,123,255";
+
+  function targetAmp(t) {
+    switch (state) {
+      case "listening": return 0.55 + 0.45 * level + 0.12 * Math.sin(t * 7);
+      case "thinking":  return 0.42 + 0.16 * Math.sin(t * 3) + 0.10 * Math.sin(t * 11);
+      case "speaking":  return 0.5 + 0.45 * Math.abs(Math.sin(t * 9)) + 0.2 * Math.abs(Math.sin(t * 15));
+      case "starting":  return 0.28 + 0.10 * Math.sin(t * 2);
+      case "muted":     return 0.14;
+      case "error":     return 0.35 + 0.3 * Math.abs(Math.sin(t * 20));
+      case "stopped":   return 0.06;
+      default:          return 0.26 + 0.07 * Math.sin(t * 1.6); // idle breathing
+    }
+  }
+  function palette() {
+    if (state === "error")  return "255,92,114";
+    if (state === "muted")  return "120,150,165";
+    if (state === "stopped")return "90,120,135";
+    return CY_RGB;
+  }
+
+  function ring(r, width, alpha, rgb, dash, rot) {
+    ctx.save();
+    ctx.translate(CX, CY); ctx.rotate(rot || 0);
+    ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.lineWidth = width;
+    ctx.strokeStyle = "rgba(" + rgb + "," + alpha + ")";
+    if (dash) ctx.setLineDash(dash);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  let last = performance.now();
+  function frame(now) {
+    const t = now / 1000;
+    const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    amp += (targetAmp(t) - amp) * Math.min(1, dt * 6);
+    const rgb = palette();
+    const normal = rgb === CY_RGB;
+    const core = R * (0.62 + amp * 0.5);
+
+    ctx.clearRect(0, 0, W, H);
+    ctx.globalCompositeOperation = "lighter";
+
+    // outer halo — cyan with a faint violet fringe for depth
+    let g = ctx.createRadialGradient(CX, CY, core * 0.2, CX, CY, R * 2.4);
+    g.addColorStop(0, "rgba(" + rgb + "," + (0.15 + amp * 0.20) + ")");
+    g.addColorStop(1, "rgba(" + rgb + ",0)");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+    if (normal) {
+      g = ctx.createRadialGradient(CX, CY, core * 0.6, CX, CY, R * 2.1);
+      g.addColorStop(0, "rgba(" + VI_RGB + ",0)");
+      g.addColorStop(0.65, "rgba(" + VI_RGB + "," + (0.05 + amp * 0.06) + ")");
+      g.addColorStop(1, "rgba(" + VI_RGB + ",0)");
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, W, H);
+    }
+
+    // concentric rings
+    ring(R * 1.55, 1, 0.09 + amp * 0.09, rgb, [2, 8], t * 0.25);
+    ring(R * 1.30, 1.2, 0.14 + amp * 0.16, rgb, null, 0);
+    // thinking: fast dashed spinner
+    const spin = state === "thinking" ? t * 2.6 : t * 0.5;
+    ring(R * 1.08, 2, 0.45 + amp * 0.3, rgb, [Math.PI * R * 0.5, Math.PI * R * 0.5], spin);
+
+    // radar sweep (skipped for reduced motion)
+    if (!REDUCED) {
+      ctx.save();
+      ctx.translate(CX, CY); ctx.rotate(t * (state === "thinking" ? 3.4 : 1.1));
+      const sweep = ctx.createLinearGradient(0, 0, R * 1.3, 0);
+      sweep.addColorStop(0, "rgba(" + rgb + ",0)");
+      sweep.addColorStop(1, "rgba(" + rgb + "," + (0.09 + amp * 0.12) + ")");
+      ctx.fillStyle = sweep;
+      ctx.beginPath(); ctx.moveTo(0, 0);
+      ctx.arc(0, 0, R * 1.3, -0.34, 0.02); ctx.closePath(); ctx.fill();
+      ctx.restore();
+    }
+
+    // speaking: radial waveform bars
+    if (state === "speaking") {
+      const bars = 56;
+      for (let i = 0; i < bars; i++) {
+        const a = (i / bars) * Math.PI * 2;
+        const h = R * (0.14 + 0.5 * Math.abs(Math.sin(t * 10 + i * 0.7)) * (0.4 + amp));
+        const r0 = core * 1.12, r1 = r0 + h;
+        ctx.strokeStyle = "rgba(" + rgb + "," + (0.35 + amp * 0.3) + ")";
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.moveTo(CX + Math.cos(a) * r0, CY + Math.sin(a) * r0);
+        ctx.lineTo(CX + Math.cos(a) * r1, CY + Math.sin(a) * r1);
+        ctx.stroke();
+      }
+    }
+
+    // particles (skipped for reduced motion)
+    if (!REDUCED) {
+      for (const p of PARTS) {
+        p.a += p.spd * dt; p.tw += dt * 3;
+        const pr = core * (1.15 + p.rad * (0.5 + amp * 0.35));
+        const x = CX + Math.cos(p.a) * pr, y = CY + Math.sin(p.a) * pr;
+        const tw = 0.4 + 0.6 * Math.abs(Math.sin(p.tw));
+        ctx.fillStyle = "rgba(" + rgb + "," + (tw * (0.45 + amp * 0.35)) + ")";
+        ctx.beginPath(); ctx.arc(x, y, p.sz, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+
+    // core glow — smoother falloff than v1
+    g = ctx.createRadialGradient(CX, CY, 0, CX, CY, core);
+    g.addColorStop(0, "rgba(235,253,255," + (0.85 + amp * 0.15) + ")");
+    g.addColorStop(0.22, "rgba(" + rgb + "," + (0.72 + amp * 0.22) + ")");
+    g.addColorStop(0.5, "rgba(" + rgb + "," + (0.34 + amp * 0.22) + ")");
+    g.addColorStop(0.78, "rgba(" + rgb + "," + (0.12 + amp * 0.14) + ")");
+    g.addColorStop(1, "rgba(" + rgb + ",0)");
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(CX, CY, core, 0, Math.PI * 2); ctx.fill();
+
+    // fine specular arc — light catching the upper-left of the glass sphere
+    ctx.globalCompositeOperation = "source-over";
+    ctx.strokeStyle = "rgba(255,255,255," + (0.30 + amp * 0.25) + ")";
+    ctx.lineWidth = 1.3;
+    ctx.lineCap = "round";
+    ctx.beginPath(); ctx.arc(CX, CY, core * 0.78, -2.55, -1.35); ctx.stroke();
+
+    // inner ring outline
+    ctx.strokeStyle = "rgba(" + rgb + "," + (0.45 + amp * 0.3) + ")";
+    ctx.lineWidth = 1.3;
+    ctx.beginPath(); ctx.arc(CX, CY, core * 0.62, 0, Math.PI * 2); ctx.stroke();
+
+    // muted slash
+    if (state === "muted") {
+      ctx.strokeStyle = "rgba(255,92,114,0.8)"; ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(CX - core * 0.5, CY - core * 0.5);
+      ctx.lineTo(CX + core * 0.5, CY + core * 0.5);
+      ctx.stroke();
+    }
+
+    requestAnimationFrame(frame);
+  }
+
+  resize();
+  requestAnimationFrame(frame);
+
+  // If the bridge is already present (fast load), announce readiness.
+  if (api()) call("ready");
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,135 @@
+# Ada default configuration.
+# Copy this file to ./config.yaml (or run `ada setup`) and edit as needed.
+# The default setup is fully local and free (Ollama brain + Whisper speech),
+# so no API keys are required. Keys are only needed if you opt into a cloud
+# provider, and are NEVER read from this file — they come from the environment
+# or a .env file next to config.yaml:
+#   ANTHROPIC_API_KEY   (only for llm.provider: anthropic — cloud brain)
+#   DEEPGRAM_API_KEY    (only for stt.provider: deepgram — cloud speech-to-text)
+#   ELEVENLABS_API_KEY  (only for tts.provider: elevenlabs — natural cloud voice)
+
+assistant:
+  name: Ada
+
+# Voice activation. Ada is triggered by the push-to-talk hotkey below by
+# default (see `hotkey`). openWakeWord ships no "hey ada" model, so hands-free
+# wake is off out of the box. To go hands-free, set enabled: true — `model`
+# is then the prebuilt phrase you say to wake it (see the list below). To make
+# the wake phrase match the name, train a custom "hey ada" model and point
+# `model` at it (see the README).
+wake:
+  enabled: false
+  # Prebuilt phrases: hey_mycroft | alexa | hey_rhasspy | hey_jarvis
+  model: hey_mycroft_v0.1    # only used when enabled: true
+  threshold: 0.5             # 0..1 — higher = fewer false activations
+  cooldown_s: 2.0            # ignore repeat activations within this window
+
+audio:
+  input_device: null         # null = system default. `ada doctor` lists devices.
+  sample_rate: 16000
+  frame_samples: 1280        # 80 ms @ 16 kHz (openWakeWord frame size)
+
+vad:
+  threshold: 0.5             # Silero VAD speech probability threshold
+  pre_roll_ms: 320           # audio kept from just before speech starts
+  min_speech_ms: 200         # shorter blips are ignored
+  end_silence_ms: 600        # utterance ends after this much trailing silence
+  max_utterance_s: 15.0      # hard cap on a single utterance
+  no_speech_timeout_s: 6.0   # give up listening if speech never starts
+
+stt:
+  provider: local            # local | deepgram (deepgram needs DEEPGRAM_API_KEY)
+  local:
+    model: small.en          # tiny.en | base.en | small.en (bigger = better, slower)
+    compute_type: int8
+  deepgram:
+    model: nova-3
+
+llm:
+  provider: ollama           # ollama = local & free (needs Ollama installed) | anthropic = cloud API
+  max_tool_iterations: 6     # bounded agent loop per request
+  history_max_messages: 24   # short-term conversational memory
+  reset_history_after_min: 10
+  ollama:
+    # Any model tag you've pulled with `ollama pull <tag>`. Tool calling (so Ada
+    # can actually open apps, set volume, etc.) needs a model whose Ollama
+    # template supports tools — if it doesn't, Ada still chats but can't act.
+    # Gemma is great for conversation; qwen2.5 / llama3.1 are the most reliable
+    # for tool calling. Rough RAM fit: gemma4:e4b ~4 GB, gemma4:12b ~8 GB (needs
+    # ~16 GB RAM), gemma4:31b ~18 GB (needs ~24 GB+). Pick to fit your machine.
+    model: gemma4:12b
+    host: http://localhost:11434
+    temperature: 0.6
+    num_ctx: 8192            # context window (bigger = more memory use)
+    keep_alive: 30m          # keep the model in RAM between requests
+    think: false             # thinking models (gemma4, qwen3) reason silently for
+                             # seconds before speaking — keep this off for voice
+  anthropic:                 # only used when provider: anthropic (needs ANTHROPIC_API_KEY)
+    model: claude-opus-4-8
+    effort: low              # low | medium | high — low keeps voice replies snappy
+    max_tokens: 2048
+
+tts:
+  # say = built-in macOS voice (zero setup) | kokoro = natural local neural
+  # voice (free, on-device; needs the `voice` extra + `ada setup` to download a
+  # ~340 MB model) | elevenlabs = cloud (needs ELEVENLABS_API_KEY).
+  provider: say
+  say:
+    voice: Samantha          # a macOS voice; `say -v '?'` lists them
+    rate_wpm: 190
+  kokoro:
+    # Natural, free, on-device neural voice. Voices: af_heart / af_bella /
+    # af_nova / af_sarah (US female), am_michael / am_adam / am_puck (US male),
+    # bf_emma / bm_george (British). Speed 0.8–1.3 feels natural.
+    voice: af_heart
+    speed: 1.0
+    lang: ""                 # "" = auto (en-us; en-gb for b* voices)
+  elevenlabs:
+    voice_id: 21m00Tcm4TlvDq8ikWAM   # "Rachel"
+    model: eleven_flash_v2_5
+
+ui:
+  hud: true                  # native on-screen HUD window (glowing orb + transcript;
+                             # needs the `gui` extra: pip install -e ".[gui]"). `ada
+                             # run` shows it by default; use --no-gui for terminal only.
+  theme: jarvis-cyan         # HUD look (currently: jarvis-cyan)
+  menubar: true              # menu-bar status icon (used by `ada run --menubar`)
+  chimes: true               # audible cue when the mic starts/stops listening
+  show_timings: true         # show a per-turn latency readout in the HUD
+
+hotkey:
+  # Push-to-talk: tap this combo, then just speak (Ada listens until you stop).
+  # This is the default trigger. Requires the `pynput` extra + macOS
+  # Input Monitoring permission. If the combo clashes with an app shortcut,
+  # change it here (pynput format, e.g. "<ctrl>+<alt>+a").
+  enabled: true
+  combo: "<cmd>+<shift>+a"
+
+permissions:
+  allowed_app_dirs:          # apps may only be launched from these locations
+    - /Applications
+    - /System/Applications
+    - /System/Library/CoreServices
+  blocked_apps: []           # apps the assistant may never launch or quit
+  file_roots:                # file search / open is restricted to these folders
+    - ~/Documents
+    - ~/Desktop
+    - ~/Downloads
+  url_schemes: [http, https] # only these URL schemes may be opened
+  always_confirm:            # these tools always require a confirmation dialog
+    - quit_app
+    - system_sleep
+
+# Long-term memory: facts Ada learns about you ("remember that…", preferences,
+# corrections) persist across sessions in a local JSONL file and the most
+# relevant ones are recalled automatically on each request. Fully on-device.
+memory:
+  enabled: true
+  path: data/memory.jsonl    # relative to the config file's directory
+  max_facts: 400
+  inject_top_k: 4            # how many recalled facts accompany each request
+
+logging:
+  dir: logs                  # relative to the config file's directory
+  level: INFO
+  audit: true                # JSONL audit log of every tool call
